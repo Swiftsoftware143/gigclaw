@@ -14,6 +14,40 @@ export interface GigConfig {
   };
   apps: Record<string, AppConfig>;
   geocodingApiKey?: string;
+  // Schedule & Zone features
+  schedule: WeeklySchedule;
+  zones: Record<string, Zone>;
+  acceptFutureOrders: boolean;
+  maxFutureDays: number; // How many days ahead to accept
+}
+
+export interface WeeklySchedule {
+  monday: DaySchedule;
+  tuesday: DaySchedule;
+  wednesday: DaySchedule;
+  thursday: DaySchedule;
+  friday: DaySchedule;
+  saturday: DaySchedule;
+  sunday: DaySchedule;
+}
+
+export interface DaySchedule {
+  enabled: boolean;
+  timeSlots: TimeSlot[];
+}
+
+export interface TimeSlot {
+  startTime: string; // "08:00" (24-hour format)
+  endTime: string;   // "17:00"
+  zoneId: string;    // Reference to zones
+}
+
+export interface Zone {
+  id: string;
+  name: string;
+  center: { lat: number; lng: number };
+  radiusMiles: number;
+  addresses: string[]; // Alternative: list of addresses defining zone
 }
 
 export interface AppConfig {
@@ -29,6 +63,7 @@ export interface OrderInfo {
   pickupAddress?: string;
   dropoffAddress?: string;
   timestamp: number;
+  orderDateTime?: Date; // When the order is scheduled for
 }
 
 export interface ActiveBatch {

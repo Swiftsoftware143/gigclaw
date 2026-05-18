@@ -154,7 +154,14 @@ export default function GigClawScreen() {
           style={styles.settingsButton} 
           onPress={() => router.push('/gig-settings')}
         >
-          <Text style={styles.buttonText}>⚙️ Settings</Text>
+          <Text style={styles.buttonText}>⚙️ App Settings</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.settingsButton, { backgroundColor: '#5856D6', marginTop: 12 }]} 
+          onPress={() => router.push('/gig-schedule')}
+        >
+          <Text style={styles.buttonText}>📅 Schedule & Zones</Text>
         </TouchableOpacity>
       </View>
 

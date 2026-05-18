@@ -8,7 +8,7 @@
 import ClawAccessibilityModule from '../native/ClawAccessibilityModule';
 import { captureScreen, getScreenText } from '../tools/screen';
 import { clickByText, tap } from '../tools/touch';
-import { GigConfig, OrderInfo, ActiveBatch, DirectionVector } from './types';
+import { GigConfig, OrderInfo, ActiveBatch, DirectionVector, Zone, TimeSlot } from './types';
 import { calculateDistance, calculateDirection, isSameDirection } from './geo';
 
 // Supported gig apps with their detection patterns
@@ -223,6 +223,9 @@ export class GigDetector {
       }
     }
 
+    // Parse order date/time
+    const orderDateTime = this.parseOrderDateTime(screenText, appConfig.appName || '');
+
     // Must have at least pay or pickup address
     if (!pay && !pickupAddress) return null;
 
@@ -231,6 +234,7 @@ export class GigDetector {
       distance,
       pickupAddress,
       timestamp: Date.now(),
+      orderDateTime: orderDateTime || new Date(),
     };
   }
 
@@ -245,6 +249,28 @@ export class GigDetector {
     if (order.pay < appConfig.minPay) {
       console.log(`[GigClaw] Order rejected: pay $${order.pay} < min $${appConfig.minPay}`);
       return false;
+    }
+
+    // Check if order is within future order limits
+    if (!order.orderDateTime || !this.isWithinFutureLimit(order.orderDateTime)) {
+      console.log('[GigClaw] Order rejected: outside future order limit');
+      return false;
+    }
+
+    // Check schedule
+    const scheduleCheck = this.checkSchedule(order.orderDateTime);
+    if (!scheduleCheck.allowed) {
+      console.log('[GigClaw] Order rejected: outside scheduled hours');
+      return false;
+    }
+
+    // Check zone if scheduled zone exists
+    if (scheduleCheck.zoneId && order.pickupAddress) {
+      const inZone = await this.checkZone(order.pickupAddress, scheduleCheck.zoneId);
+      if (!inZone) {
+        console.log(`[GigClaw] Order rejected: outside zone ${scheduleCheck.zoneId}`);
+        return false;
+      }
     }
 
     // Get current location
@@ -466,5 +492,149 @@ export class GigDetector {
     } catch (e) {
       console.error('[GigClaw] Failed to send Telegram notification:', e);
     }
+  }
+
+  /**
+   * Parse order date/time from screen text
+   * Returns timestamp or null if not found
+   */
+  private parseOrderDateTime(screenText: string, appName: string): Date | null {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    // Common patterns for future orders
+    const patterns = [
+      // "Tomorrow 2:30 PM", "Tomorrow at 2:30 PM"
+      { regex: /tomorrow\s+(?:at\s+)?(\d{1,2}):?(\d{2})?\s*(am|pm)/i, handler: (m: RegExpMatchArray) => {
+        const hours = parseInt(m[1]);
+        const mins = m[2] ? parseInt(m[2]) : 0;
+        const ampm = m[3].toLowerCase();
+        const date = new Date(today);
+        date.setDate(date.getDate() + 1);
+        date.setHours(ampm === 'pm' && hours !== 12 ? hours + 12 : hours, mins, 0, 0);
+        return date;
+      }},
+      // "Today 2:30 PM", "Today at 2:30 PM"
+      { regex: /today\s+(?:at\s+)?(\d{1,2}):?(\d{2})?\s*(am|pm)/i, handler: (m: RegExpMatchArray) => {
+        const hours = parseInt(m[1]);
+        const mins = m[2] ? parseInt(m[2]) : 0;
+        const ampm = m[3].toLowerCase();
+        const date = new Date(today);
+        date.setHours(ampm === 'pm' && hours !== 12 ? hours + 12 : hours, mins, 0, 0);
+        return date;
+      }},
+      // "Mon 2:30 PM", "Monday 2:30 PM"
+      { regex: /(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\s+(?:at\s+)?(\d{1,2}):?(\d{2})?\s*(am|pm)/i, handler: (m: RegExpMatchArray) => {
+        const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+        const dayMatch = m[0].toLowerCase().substring(0, 3);
+        const targetDay = dayNames.indexOf(dayMatch);
+        if (targetDay === -1) return null;
+        
+        const hours = parseInt(m[1]);
+        const mins = m[2] ? parseInt(m[2]) : 0;
+        const ampm = m[3].toLowerCase();
+        
+        const date = new Date(today);
+        const currentDay = date.getDay();
+        let daysUntil = targetDay - currentDay;
+        if (daysUntil <= 0) daysUntil += 7; // Next week
+        
+        date.setDate(date.getDate() + daysUntil);
+        date.setHours(ampm === 'pm' && hours !== 12 ? hours + 12 : hours, mins, 0, 0);
+        return date;
+      }},
+      // "Jun 15 2:30 PM", "6/15 2:30 PM"
+      { regex: /(?:\d{1,2}\/\d{1,2}|\w+\s+\d{1,2})\s+(?:at\s+)?(\d{1,2}):?(\d{2})?\s*(am|pm)/i, handler: (m: RegExpMatchArray) => {
+        // Try to parse as date
+        const dateStr = m[0].replace(/\s+(?:at\s+)?\d{1,2}:?\d{2}?\s*(?:am|pm)/i, '');
+        const parsedDate = new Date(dateStr + ' ' + now.getFullYear());
+        if (isNaN(parsedDate.getTime())) return null;
+        
+        const hours = parseInt(m[1]);
+        const mins = m[2] ? parseInt(m[2]) : 0;
+        const ampm = m[3].toLowerCase();
+        
+        parsedDate.setHours(ampm === 'pm' && hours !== 12 ? hours + 12 : hours, mins, 0, 0);
+        return parsedDate;
+      }},
+      // "Scheduled for 2:30 PM" (assume today if no date)
+      { regex: /scheduled\s+(?:for\s+)?(\d{1,2}):?(\d{2})?\s*(am|pm)/i, handler: (m: RegExpMatchArray) => {
+        const hours = parseInt(m[1]);
+        const mins = m[2] ? parseInt(m[2]) : 0;
+        const ampm = m[3].toLowerCase();
+        const date = new Date(today);
+        date.setHours(ampm === 'pm' && hours !== 12 ? hours + 12 : hours, mins, 0, 0);
+        return date;
+      }},
+    ];
+
+    for (const pattern of patterns) {
+      const match = screenText.match(pattern.regex);
+      if (match) {
+        const result = pattern.handler(match);
+        if (result) return result;
+      }
+    }
+
+    // Default: assume ASAP/immediate order (within next hour)
+    return now;
+  }
+
+  /**
+   * Check if order date/time matches schedule
+   */
+  private checkSchedule(orderDateTime: Date): { allowed: boolean; zoneId?: string } {
+    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const dayName = dayNames[orderDateTime.getDay()] as keyof WeeklySchedule;
+    const daySchedule = this.config.schedule[dayName];
+
+    if (!daySchedule || !daySchedule.enabled) {
+      return { allowed: false };
+    }
+
+    const orderTime = orderDateTime.getHours() * 60 + orderDateTime.getMinutes();
+
+    for (const slot of daySchedule.timeSlots) {
+      const [startHour, startMin] = slot.startTime.split(':').map(Number);
+      const [endHour, endMin] = slot.endTime.split(':').map(Number);
+      const slotStart = startHour * 60 + startMin;
+      const slotEnd = endHour * 60 + endMin;
+
+      if (orderTime >= slotStart && orderTime <= slotEnd) {
+        return { allowed: true, zoneId: slot.zoneId };
+      }
+    }
+
+    return { allowed: false };
+  }
+
+  /**
+   * Check if pickup location is within scheduled zone
+   */
+  private async checkZone(pickupAddress: string, zoneId: string): Promise<boolean> {
+    const zone = this.config.zones[zoneId];
+    if (!zone) return false;
+
+    const pickupCoords = await this.geocodeAddress(pickupAddress);
+    if (!pickupCoords) return false;
+
+    // Check if within zone radius
+    const distance = calculateDistance(zone.center, pickupCoords);
+    return distance <= zone.radiusMiles;
+  }
+
+  /**
+   * Check if order is within future order limits
+   */
+  private isWithinFutureLimit(orderDateTime: Date): boolean {
+    if (!this.config.acceptFutureOrders) {
+      // Only accept orders within next 2 hours
+      const twoHoursFromNow = new Date(Date.now() + 2 * 60 * 60 * 1000);
+      return orderDateTime <= twoHoursFromNow;
+    }
+
+    const maxDate = new Date();
+    maxDate.setDate(maxDate.getDate() + this.config.maxFutureDays);
+    return orderDateTime <= maxDate;
   }
 }
