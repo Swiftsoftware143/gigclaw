@@ -53,6 +53,10 @@ interface ClawAccessibilityInterface {
   startAgentService(): Promise<boolean>;
   stopAgentService(): Promise<boolean>;
 
+  // Location (for GigClaw)
+  getCurrentLocation(): Promise<{ latitude: number; longitude: number } | null>;
+  getCurrentPackage(): Promise<string>;
+
   // Events
   addListener(eventName: string): void;
   removeListeners(count: number): void;
@@ -111,6 +115,10 @@ const ClawAccessibilityModule: ClawAccessibilityInterface = {
   // ─── Background Execution ───────────────────────────────────────
   startAgentService: () => androidOnly(false, () => NativeClawModule.startAgentService()),
   stopAgentService: () => androidOnly(false, () => NativeClawModule.stopAgentService()),
+
+  // ─── Location (GigClaw) ─────────────────────────────────────────
+  getCurrentLocation: () => androidOnly(null, () => NativeClawModule.getCurrentLocation()),
+  getCurrentPackage: () => androidOnly('', () => NativeClawModule.getCurrentPackage()),
 
   addListener: (eventName) => {
     if (Platform.OS === 'android') {

@@ -5,6 +5,15 @@
 import ClawAccessibilityModule from '../native/ClawAccessibilityModule';
 import type { Tool } from './index';
 
+// Direct exports for GigClaw
+export async function getScreenText(): Promise<string> {
+    return await ClawAccessibilityModule.getScreenText();
+}
+
+export async function captureScreen(): Promise<string> {
+    return await ClawAccessibilityModule.takeScreenshot();
+}
+
 export const screenTools: Tool[] = [
     {
         name: 'getScreenText',

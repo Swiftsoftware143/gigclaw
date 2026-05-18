@@ -334,6 +334,9 @@ export default function ChatScreen() {
                     )}
                 </View>
                 <View style={styles.headerRight}>
+                    <Pressable style={styles.headerIconBtn} onPress={() => router.push('/gigclaw')}>
+                        <Ionicons name="car-outline" size={20} color={palette.textTertiary} />
+                    </Pressable>
                     <Pressable style={styles.headerIconBtn} onPress={() => router.push('/settings')}>
                         <Ionicons name="settings-outline" size={20} color={palette.textTertiary} />
                     </Pressable>

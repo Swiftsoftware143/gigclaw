@@ -27,6 +27,8 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen name="index" />
+        <Stack.Screen name="gigclaw" />
+        <Stack.Screen name="gig-settings" />
         <Stack.Screen
           name="settings"
           options={{

@@ -5,6 +5,15 @@
 import ClawAccessibilityModule from '../native/ClawAccessibilityModule';
 import type { Tool } from './index';
 
+// Direct exports for GigClaw
+export async function tap(x: number, y: number): Promise<boolean> {
+    return await ClawAccessibilityModule.tap(x, y);
+}
+
+export async function clickByText(text: string): Promise<boolean> {
+    return await ClawAccessibilityModule.clickByText(text);
+}
+
 export const touchTools: Tool[] = [
     {
         name: 'tap',
