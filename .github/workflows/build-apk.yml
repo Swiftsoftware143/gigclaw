@@ -1,0 +1,99 @@
+name: Build GigClaw APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # Allows manual trigger
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+      
+    - name: Cache Gradle packages
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        restore-keys: |
+          ${{ runner.os }}-gradle-
+          
+    - name: Install Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Make gradlew executable
+      run: chmod +x android/gradlew
+      
+    - name: Build Release APK
+      run: |
+        cd android
+        ./gradlew assembleRelease --no-daemon
+      env:
+        ANDROID_HOME: ${{ env.ANDROID_HOME }}
+        
+    - name: Sign APK (optional - unsigned for now)
+      run: |
+        echo "APK built successfully"
+        ls -la android/app/build/outputs/apk/release/
+        
+    - name: Upload APK to Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: gigclaw-release-apk
+        path: android/app/build/outputs/apk/release/app-release-unsigned.apk
+        retention-days: 30
+        
+    - name: Create Release (on main branch only)
+      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v${{ github.run_number }}
+        name: GigClaw Release v${{ github.run_number }}
+        body: |
+          ## GigClaw APK Build
+          
+          **Build Date:** ${{ github.event.head_commit.timestamp }}
+          **Commit:** ${{ github.sha }}
+          
+          ### Features
+          - Auto-accept gig orders
+          - Geofence & destination mode
+          - Smart batching (max 3 orders)
+          - Weekly schedule & zones
+          - Anti-detection guardrails
+          
+          ### Installation
+          1. Download APK
+          2. Enable "Install from unknown sources"
+          3. Install APK
+          4. Grant permissions (see PERMISSIONS-CHECKLIST.md)
+          
+          ### Note
+          This is an **unsigned APK**. You may need to allow unsigned apps in your Android settings.
+        files: android/app/build/outputs/apk/release/app-release-unsigned.apk
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
