@@ -93,6 +93,15 @@ export class GigDetector {
   private checkInterval: NodeJS.Timeout | null = null;
   private telegramBotToken: string | null = null;
   private telegramChatId: string | null = null;
+  
+  // Guardrail tracking
+  private acceptHistory: number[] = []; // Timestamps of accepts
+  private consecutiveAccepts = 0;
+  private lastAcceptTime = 0;
+  private inBreakMode = false;
+  private breakEndTime = 0;
+  private dailyAcceptCount = 0;
+  private lastDayReset = new Date().toDateString();
 
   constructor(config: GigConfig) {
     this.config = config;
@@ -113,12 +122,23 @@ export class GigDetector {
     if (this.isRunning) return;
     this.isRunning = true;
     
-    // Check every 2 seconds for new orders
-    this.checkInterval = setInterval(() => {
+    // Use variable check interval if guardrails enabled
+    const checkInterval = this.getCheckInterval();
+    
+    const scheduleCheck = () => {
+      if (!this.isRunning) return;
       this.checkForOrders();
-    }, 2000);
+      
+      // Schedule next check with variable interval
+      const nextInterval = this.getCheckInterval();
+      this.checkInterval = setTimeout(scheduleCheck, nextInterval);
+    };
+    
+    // Start the loop
+    this.checkInterval = setTimeout(scheduleCheck, checkInterval);
 
     console.log('[GigClaw] Started monitoring for orders');
+    this.sendTelegramNotification('🚀 GigClaw started monitoring\nGuardrails: ' + (this.config.guardrails.enabled ? '✅ ON' : '❌ OFF'));
     this.sendTelegramNotification('🚀 GigClaw started monitoring');
   }
 
@@ -353,6 +373,19 @@ export class GigDetector {
       }
     }
 
+    // Check guardrails
+    const guardrailCheck = this.checkGuardrails();
+    if (!guardrailCheck.allowed) {
+      console.log(`[GigClaw] Guardrail blocked: ${guardrailCheck.reason}`);
+      return false;
+    }
+
+    // Check human behavior decline (borderline orders)
+    if (this.shouldDeclineForHumanBehavior(order)) {
+      console.log('[GigClaw] Declining borderline order for human behavior');
+      return false;
+    }
+
     return true;
   }
 
@@ -361,6 +394,15 @@ export class GigDetector {
    */
   private async acceptOrder(order: OrderInfo, appConfig: any) {
     console.log('[GigClaw] Accepting order:', order);
+
+    // Apply human-like delay before accepting
+    const tapDelay = this.getTapDelay();
+    if (tapDelay > 0) {
+      await this.delay(tapDelay);
+    }
+
+    // Perform human-like scroll occasionally
+    await this.humanLikeScroll();
 
     // Try to click accept button
     let accepted = false;
@@ -408,6 +450,9 @@ export class GigDetector {
       `Distance: ${order.distance || 'Unknown'} mi\n` +
       `${batchInfo}`
     );
+
+    // Record accept for guardrails
+    this.recordAccept();
 
     console.log('[GigClaw] Order accepted successfully');
   }
@@ -636,5 +681,161 @@ export class GigDetector {
     const maxDate = new Date();
     maxDate.setDate(maxDate.getDate() + this.config.maxFutureDays);
     return orderDateTime <= maxDate;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // GUARDRAIL METHODS
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Check all guardrails before accepting
+   */
+  private checkGuardrails(): { allowed: boolean; reason?: string } {
+    const gr = this.config.guardrails;
+    if (!gr.enabled) return { allowed: true };
+
+    // Reset daily count if new day
+    const today = new Date().toDateString();
+    if (today !== this.lastDayReset) {
+      this.dailyAcceptCount = 0;
+      this.lastDayReset = today;
+    }
+
+    // Check break mode
+    if (this.inBreakMode) {
+      if (Date.now() < this.breakEndTime) {
+        return { allowed: false, reason: 'In mandatory break' };
+      }
+      this.inBreakMode = false;
+    }
+
+    // Check daily limit
+    if (this.dailyAcceptCount >= gr.maxAcceptsPerDay) {
+      return { allowed: false, reason: 'Daily accept limit reached' };
+    }
+
+    // Check hourly limit
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    const acceptsLastHour = this.acceptHistory.filter(t => t > oneHourAgo).length;
+    if (acceptsLastHour >= gr.maxAcceptsPerHour) {
+      return { allowed: false, reason: 'Hourly accept limit reached' };
+    }
+
+    // Check minimum time between accepts
+    const timeSinceLastAccept = Date.now() - this.lastAcceptTime;
+    if (timeSinceLastAccept < gr.minTimeBetweenAcceptsMs) {
+      return { allowed: false, reason: 'Too soon after last accept' };
+    }
+
+    // Check consecutive accepts
+    if (this.consecutiveAccepts >= gr.maxConsecutiveAccepts) {
+      this.inBreakMode = true;
+      this.breakEndTime = Date.now() + gr.breakDurationMs;
+      this.consecutiveAccepts = 0;
+      return { allowed: false, reason: 'Mandatory break after consecutive accepts' };
+    }
+
+    return { allowed: true };
+  }
+
+  /**
+   * Record an accept for guardrail tracking
+   */
+  private recordAccept() {
+    const gr = this.config.guardrails;
+    if (!gr.enabled) return;
+
+    const now = Date.now();
+    this.acceptHistory.push(now);
+    this.lastAcceptTime = now;
+    this.consecutiveAccepts++;
+    this.dailyAcceptCount++;
+
+    // Clean old history (keep last 24 hours)
+    const oneDayAgo = now - 24 * 60 * 60 * 1000;
+    this.acceptHistory = this.acceptHistory.filter(t => t > oneDayAgo);
+  }
+
+  /**
+   * Check if we should decline this borderline order to appear human
+   */
+  private shouldDeclineForHumanBehavior(order: OrderInfo): boolean {
+    const gr = this.config.guardrails;
+    if (!gr.enabled || gr.declineRatio <= 0) return false;
+
+    // Only apply to borderline orders (close to min pay or edge of zone)
+    const isBorderline = this.isBorderlineOrder(order);
+    if (!isBorderline) return false;
+
+    // Random decline based on ratio
+    return Math.random() < gr.declineRatio;
+  }
+
+  /**
+   * Determine if order is borderline (close to rejection thresholds)
+   */
+  private isBorderlineOrder(order: OrderInfo): boolean {
+    const appConfig = this.config.apps[order.appName!];
+    if (!appConfig) return false;
+
+    // Check if pay is close to minimum (within 20%)
+    if (order.pay < appConfig.minPay * 1.2) return true;
+
+    // Check if at edge of zone/radius
+    // This would require knowing exact distance, simplified here
+    return false;
+  }
+
+  /**
+   * Get randomized check interval for activity variance
+   */
+  private getCheckInterval(): number {
+    const gr = this.config.guardrails;
+    const baseInterval = 2000; // 2 seconds
+    
+    if (!gr.enabled || !gr.activityVariance) return baseInterval;
+
+    // Add ±25% variance
+    const variance = baseInterval * 0.25;
+    return baseInterval + (Math.random() * variance * 2 - variance);
+  }
+
+  /**
+   * Perform human-like scroll before accepting
+   */
+  private async humanLikeScroll(): Promise<void> {
+    const gr = this.config.guardrails;
+    if (!gr.enabled || !gr.humanLikeScrolls) return;
+
+    // 30% chance to scroll
+    if (Math.random() > 0.3) return;
+
+    try {
+      // Small scroll up then down
+      await ClawAccessibilityModule.scrollUp();
+      await this.delay(300);
+      await ClawAccessibilityModule.scrollDown();
+      await this.delay(200);
+    } catch (e) {
+      // Ignore scroll errors
+    }
+  }
+
+  /**
+   * Get randomized tap delay
+   */
+  private getTapDelay(): number {
+    const gr = this.config.guardrails;
+    if (!gr.enabled || !gr.randomizeTapDelay) return 0;
+
+    // 500-2000ms random delay
+    return 500 + Math.random() * 1500;
+  }
+
+  /**
+   * Simple delay helper
+   */
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }

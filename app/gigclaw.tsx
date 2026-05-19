@@ -163,6 +163,13 @@ export default function GigClawScreen() {
         >
           <Text style={styles.buttonText}>📅 Schedule & Zones</Text>
         </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.settingsButton, { backgroundColor: '#FF9500', marginTop: 12 }]} 
+          onPress={() => router.push('/gig-guardrails')}
+        >
+          <Text style={styles.buttonText}>🛡️ Anti-Detection Guardrails</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Supported Apps */}

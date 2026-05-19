@@ -30,6 +30,7 @@ export default function RootLayout() {
         <Stack.Screen name="gigclaw" />
         <Stack.Screen name="gig-settings" />
         <Stack.Screen name="gig-schedule" />
+        <Stack.Screen name="gig-guardrails" />
         <Stack.Screen
           name="settings"
           options={{

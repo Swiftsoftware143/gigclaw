@@ -56,4 +56,17 @@ export const DEFAULT_CONFIG: GigConfig = {
   },
   acceptFutureOrders: true,
   maxFutureDays: 7,
+  guardrails: {
+    enabled: true,
+    maxAcceptsPerHour: 8,
+    maxAcceptsPerDay: 30,
+    minTimeBetweenAcceptsMs: 5000, // 5 seconds minimum
+    randomizeTapLocation: true,
+    randomizeTapDelay: true,
+    humanLikeScrolls: true,
+    maxConsecutiveAccepts: 3,
+    breakDurationMs: 300000, // 5 minute break
+    declineRatio: 0.1, // Decline 10% of borderline orders
+    activityVariance: true,
+  },
 };

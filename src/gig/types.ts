@@ -19,6 +19,22 @@ export interface GigConfig {
   zones: Record<string, Zone>;
   acceptFutureOrders: boolean;
   maxFutureDays: number; // How many days ahead to accept
+  // Anti-detection guardrails
+  guardrails: GuardrailConfig;
+}
+
+export interface GuardrailConfig {
+  enabled: boolean;
+  maxAcceptsPerHour: number;
+  maxAcceptsPerDay: number;
+  minTimeBetweenAcceptsMs: number; // Minimum time between accepts
+  randomizeTapLocation: boolean; // Add small random offset to tap
+  randomizeTapDelay: boolean; // Add small random delay before tap
+  humanLikeScrolls: boolean; // Scroll before accepting occasionally
+  maxConsecutiveAccepts: number; // Force break after N accepts
+  breakDurationMs: number; // How long to pause after max consecutive
+  declineRatio: number; // Decline X% of borderline orders to look human
+  activityVariance: boolean; // Vary check interval slightly
 }
 
 export interface WeeklySchedule {
