@@ -10,7 +10,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+    permissions:
+      contents: write  # Needed for creating releases
+      
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -43,30 +45,38 @@ jobs:
     - name: Install dependencies
       run: npm ci
       
+    - name: Prebuild Android
+      run: npx expo prebuild --platform android --clean
+      
     - name: Make gradlew executable
       run: chmod +x android/gradlew
       
     - name: Build Release APK
       run: |
         cd android
-        ./gradlew assembleRelease --no-daemon
+        ./gradlew assembleRelease --no-daemon --stacktrace
       env:
         ANDROID_HOME: ${{ env.ANDROID_HOME }}
         
-    - name: Sign APK (optional - unsigned for now)
+    - name: Check APK exists
       run: |
-        echo "APK built successfully"
-        ls -la android/app/build/outputs/apk/release/
+        echo "Checking for APK..."
+        find android -name "*.apk" -type f
+        ls -la android/app/build/outputs/apk/release/ || echo "Release directory not found"
+        ls -la android/app/build/outputs/apk/debug/ || echo "Debug directory not found"
         
     - name: Upload APK to Artifacts
       uses: actions/upload-artifact@v4
+      if: always()
       with:
-        name: gigclaw-release-apk
-        path: android/app/build/outputs/apk/release/app-release-unsigned.apk
+        name: gigclaw-apk
+        path: |
+          android/app/build/outputs/apk/**/*.apk
         retention-days: 30
+        if-no-files-found: warn
         
-    - name: Create Release (on main branch only)
-      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    - name: Create Release
+      if: github.ref == 'refs/heads/main' && github.event_name == 'push' && success()
       uses: softprops/action-gh-release@v2
       with:
         tag_name: v${{ github.run_number }}
@@ -85,14 +95,14 @@ jobs:
           - Anti-detection guardrails
           
           ### Installation
-          1. Download APK
-          2. Enable "Install from unknown sources"
+          1. Download APK from Assets below
+          2. Enable "Install from unknown sources" on your Android phone
           3. Install APK
           4. Grant permissions (see PERMISSIONS-CHECKLIST.md)
           
           ### Note
           This is an **unsigned APK**. You may need to allow unsigned apps in your Android settings.
-        files: android/app/build/outputs/apk/release/app-release-unsigned.apk
+        files: android/app/build/outputs/apk/release/*.apk
         draft: false
         prerelease: false
       env:
